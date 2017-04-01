@@ -1,16 +1,30 @@
+#' This script retrieves all comments and selected attachments for a given Regulations.gov docket.  Beyond the dependencies in the first code block, it also uses two external command-line tools, pdftotext <http://www.foolabs.com/xpdf/download.html> and pandoc <http://pandoc.org/>.  
+
 library(tidyverse)
 library(lubridate)
 library(stringr)
 library(xml2)
-library(foreach)
 
-#' Docket of interest
+library(foreach)
+library(doSNOW)
+
+cl = parallel::makeCluster(parallel::detectCores())
+registerDoSNOW(cl)
+
+#' Top-level parameters
+## Docket of interest
+## https://www.regulations.gov/docket?D=EPA-HQ-OPP-2016-0385
 docket_id = 'EPA-HQ-OPP-2016-0385'
-pdf_folder = 'pdf'
+## Folder to put downloads
+files_folder = 'files'
+if (!file.exists(files_folder)) {
+	dir.create(files_folder)
+}
+## API key
+## http://regulationsgov.github.io/developers/key/
 source('api_key.R')
 
 #' Retrieve IDs for the public submissions in the docket
-## https://www.regulations.gov/docket?D=EPA-HQ-OPP-2016-0385
 query_url = str_c('https://api.data.gov/regulations/v3/documents.xml', 
 				  '?',
 				  'api_key=', api_key, '&', 
@@ -23,10 +37,12 @@ total_docs = response %>% xml_find_first('//recordCount') %>%
 doc_ids = response %>% xml_find_all('//documentId') %>% xml_text
 
 #' Retrieve the data for each document
-# doc_id = doc_ids[10]
+# doc_id = doc_ids[155]
 comments = foreach(doc_id = doc_ids, 
 				   .verbose = FALSE, 
-				   .combine = bind_rows) %do% {
+				   .combine = bind_rows, 
+				   .packages = c('tidyverse', 'lubridate',
+				   			  'stringr', 'xml2')) %do% {
 		   	query_url = str_c('https://api.data.gov/regulations/v3/document.xml', 
 		   					  '?', 
 		   					  'api_key=', api_key, '&', 
@@ -48,8 +64,11 @@ comments = foreach(doc_id = doc_ids,
 		   		xml_text
 		   	if (length(attachment_urls) == 0) {
 		   		attachments = NA
-		   		attachment_urls = NA
+		   		attachment_urls = as.character(NA)
 		   	}
+		   	## Don't get rate-limited
+		   	# Sys.sleep(1)
+		   	
 		   	tibble(comment_id = doc_id, 
 		   		   num_comments, 
 		   		   comment_text, 
@@ -66,24 +85,64 @@ comments = foreach(doc_id = doc_ids,
 #' total comments. There are
 {{comments$attachment_urls %>% unlist %>% .[!is.na(.)] %>% length}}
 #' attachments to download. 
+#' 
 
-#' Retrieve PDF attachments
-attachment_urls = comments$attachment_urls %>% unlist %>% .[!is.na(.)]
-# attachment_url = attachment_urls[1]
-pdf_files = foreach(attachment_url = attachment_urls) %do% {
-	parent_doc = str_match(attachment_url, 'documentId=([[:alnum:]\\-]+)')[,2]
-	attachment_num = str_match(attachment_url, 'attachmentNumber=([0-9]+)')[,2]
-	filename = str_c(parent_doc, '-', attachment_num, '.pdf')
-	destfile = str_c(pdf_folder, '/', filename)
-	if (!file.exists(destfile)) {
-		download.file(url = str_c(attachment_url, '&', 'api_key=', api_key), 
-					  destfile = destfile)
+#' Identify attachments to download
+attachments = comments %>% 
+	unnest(url = attachment_urls) %>%
+	filter(!is.na(url))
+
+attachments = attachments %>%
+	mutate(type = str_match(url, 'contentType=([^&]*)')[,2], 
+		   attachment_num = str_match(url, 'attachmentNumber=([0-9]+)')[,2], 
+		   filename = str_c(comment_id, '-', attachment_num))
+
+table(attachments$type)
+# attachments %>% filter(type == 'msw8') %>% .$url %>% str_c('&api_key=', api_key)
+
+attachments = attachments %>%
+	filter(type %in% c('pdf', 'msw12', 'msw8', 'crtext'))
+
+ext = function (type) switch(type, pdf = 'pdf', msw12 = 'docx', 
+							 		msw8 = 'doc', crtext = 'txt')
+ext = Vectorize(ext)
+attachments = attachments %>% mutate(ext = ext(type))
+
+#' Download and convert to text
+# attachment = attachments[48,]
+
+pb <- txtProgressBar(max = nrow(attachments), style = 3)
+progress <- function(n) setTxtProgressBar(pb, n)
+opts <- list(progress = progress)
+foreach(attachment = iter(attachments, by = 'row'), .combine = c, 
+		.packages = c('stringr'), 
+		.options.snow = opts) %dopar% {
+	## Download
+	dl_version = str_c(files_folder, '/', 
+					   attachment$filename, '.', attachment$ext)
+	if (!file.exists(dl_version)) {
+		url = str_c(attachment$url, '&', 'api_key=', api_key)
+		download.file(url = url, destfile = dl_version)
 	}
 	
-	## pdftotext: <http://www.foolabs.com/xpdf/download.html>
-	system2('pdftotext', destfile, str_replace('pdf/', filename, 'pdf', 'txt'))
+	## Convert to text
+	txt_version = str_c(files_folder, '/', 
+						attachment$filename, '.', 'txt')
+	if (!file.exists(txt_version)) {
+		if (attachment$ext == 'pdf') {
+			## pdftotext: <http://www.foolabs.com/xpdf/download.html>
+			system2('pdftotext', dl_version, txt_version)
+		} else if (attachment$ext == 'docx') {
+			## Pandoc
+			system2('pandoc', c(dl_version, '-o', txt_version))
+		} else if (attachment$ext == 'doc') {
+			warning(str_c('Cannot convert ', attachment$filename,' from doc to txt automatically'))
+		} else {
+			stop('Unknown file type')
+		}
+	}
 }
 
-# save(comments, file = 'comments.Rdata')
-# sessionInfo()
+save(comments, file = 'comments.Rdata')
+sessionInfo()
 
