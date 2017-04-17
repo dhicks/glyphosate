@@ -1,5 +1,3 @@
-- advocacy vs industry LR
-
 # Glyphosate SAP Clustering #
 
 ## Daniel J. Hicks, PhD ##
