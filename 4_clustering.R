@@ -7,34 +7,21 @@ library(apcluster)
 library(wordVectors)
 
 w2v_model_file = 'glyphosate_w2v.bin'
-
-## Use tf-idf to pick out a subset of focal terms
-# load('tokens_df.Rdata')
-# token_counts_df = tokens_df %>%
-# 	group_by(comment_id, token) %>%
-# 	summarize(token_n = n()) %>%
-# 	bind_tf_idf(token, comment_id, token_n) %>%
-# 	ungroup
-# ggplot(token_counts_df, aes(tf_idf)) + stat_ecdf()
-# terms = token_counts_df %>%
-# 	filter(tf_idf >= quantile(tf_idf, probs = (.99))) %>%
-# 	.$token %>% unique
-# length(terms)
-# terms[1:100]
-
-## --------------------
-## Calculate information gain of terms
-## Let's look at the distribution of negative/positive comments across commenter types
 load('comments_attachments.Rdata')
+
+#' First let's look at the distribution of negative/positive comments across commenter types
 comments %>%
 	group_by(comment_id, 
-		   commenter_type, 
-		   valence) %>%
+			 commenter_type, 
+			 valence) %>%
 	summarize(comment_text = str_c(comment_text, 
 								   collapse = ' ')) %>%
 	ungroup() -> comments
-with(comments, table(commenter_type, valence, useNA = 'ifany'))
-## No surprise: strong correlation between advocacy/industry and neg/pos.  
+type_by_valence = with(comments, 
+					   table(commenter_type, valence, useNA = 'ifany'))
+type_by_valence
+chisq.test(type_by_valence, simulate.p.value = TRUE)
+#' No surprise: strong correlation between advocacy/industry and neg/pos. So we can treat industry comments as "highly informed and positive" and advoacy comments as "highly informed and negative."  
 
 ## Load tokens
 load('tokens_df.Rdata')
@@ -42,27 +29,101 @@ tokens_df %>%
 	filter(commenter_type %in% c('advocacy', 'industry'), 
 		   str_detect(token, '[a-z]+')) -> tokens_df
 
-## Calculate information gain
+tokens_df %>% 
+	.$token %>%
+	unique %>%
+	length
+
+## --------------------
+#' ## Term selection: tf-idf ##
+#' With tens of thousands of terms, the next step of analysis is to identify a set of focal terms.  One approach is to use tf-idf, treating the industry and advocacy as two bags-of-words. 
+token_counts_df = tokens_df %>%
+	group_by(commenter_type, token) %>%
+	summarize(token_n = n()) %>%
+	bind_tf_idf(token, commenter_type, token_n) %>%
+	ungroup()
+ggplot(token_counts_df, aes(tf_idf)) + 
+	stat_ecdf() + 
+	scale_x_log10()
+token_counts_df %>%
+	# filter(tf_idf >= quantile(tf_idf, probs = (.995))) %>%
+	arrange(desc(tf_idf)) %>%
+	head(100) %>%
+	.$token %>% 
+	unique()
+
+#' However, note that the idf calculation, and so the tf-idf calculation, assigns a value of 0 to any term that occurs in both industry and advocacy documents, even if it is much more common in one of the two commenter types.  
+
+token_counts_df %>%
+	filter(token == 'children')
+
+## --------------------
+#' ## Term selection: Information gain ##
+#' An alternative approach considers the information gain (entropy difference) for each term, relative to industry and advocacy comments. 
+#' 
+
+#' *Information gain* is calculated as *reduction in entropy*, $H(X) - H(X|token)$, where for this project the random variable $X$ is the commenter type, either advocacy or industry.  In turn, *entropy* is the expected value of *information* (in bits):
+#' $$ H(X) = \sum_x p(x) I(x) = -\sum p(x) \log_2 p(x). $$ 
+#' $$ H(X|T) = \sum_t p(t) H(X|T = t) = \sum_{x,t} p(x,t) \log_2 \frac{p(x)}{p(x,t)}, $$
+#' where $T$ represents the token and takes the values $\{token, \lnot token\}$. 
+
+## Calculate unconditional entropy
 base_H = tokens_df %>%
 	.$commenter_type %>%
 	{sum(. == 'industry') / length(.)} %>%
-	{-. * log2(.)}
-		
-info_df = tokens_df %>%
-	group_by(token) %>%
-	summarize(p = sum(commenter_type == 'industry') / n()) %>%
-	filter(p > 0, p < 1) %>%
-	mutate(H = -p * log2(p), 
+	{-(. * log2(.)) + -((1-.) * log2(1 - .))}
+
+## Calculate conditional entropy and information gain
+info_df = token_counts_df %>%
+	select(-tf, -idf, -tf_idf) %>%
+	spread(commenter_type, token_n, fill = 0) %>% 
+	# filter(advocacy > 0, industry > 0) %>%
+	mutate(token_n = advocacy + industry, 
+		   corpus_n = sum(advocacy) + sum(industry)) %>%
+	mutate(p_token = token_n / corpus_n, 
+		   p_ntoken = 1 - p_token, 
+		   p_advocacy_token = advocacy / corpus_n, 
+		   h_at = p_advocacy_token * log2(p_token / p_advocacy_token),
+		   p_advocacy_ntoken = (sum(advocacy) - advocacy) / corpus_n, 
+		   h_an = p_advocacy_ntoken * log2(p_ntoken / p_advocacy_ntoken),
+		   p_industry_token = industry / corpus_n, 
+		   h_it = p_industry_token * log2(p_token / p_industry_token),
+		   p_industry_ntoken = (sum(industry) - industry) / corpus_n, 
+		   h_in = p_industry_ntoken * log2(p_ntoken / p_industry_ntoken)) %>%
+	## If a term doesn't occur in advocacy or industry, 
+	## the corresponding h_*t is NaN
+	mutate(h_at = ifelse(!is.na(h_at), h_at, 0), 
+		   h_it = ifelse(!is.na(h_it), h_it, 0)) %>%
+	## Calculate entropy and information gain
+	mutate(H = h_at + h_an + h_it + h_in,
 		   delta_H = base_H - H)
 
-ggplot(info_df, aes(p, delta_H)) + geom_point() + geom_rug()
+#' The next plot shows information gain against the conditional probability $p(industry | token)$.  Generally, information gain increases as this conditional probably becomes more extreme; the variation at the extremes is due to points that only occur in one commenter type.   
+ggplot(info_df, aes(p_industry_token / p_token, delta_H)) + 
+	geom_point() + 
+	geom_rug() + 
+	geom_smooth() + 
+	scale_y_log10()
+
+#' On this approach, relatively high-scoring terms are relatively frequent in one commenter type and much less frequent in the other.  
+
+info_df %>%
+	arrange(desc(delta_H)) %>%
+	select(token, advocacy, industry, delta_H) %>%
+	head(20)
+
+#' Simply inspecting this list indicates a few patterns.  Agriculture-related terms — sugarbeets, seed, sugar — appear to be strongly associated with industry, while advocacy uses more personal and emotionally weighted language — I, you, my; toxic.  Industry also may make more references to formal research standards — IQA, case control studies, quality standards. Vaccines are appear on this list, due to a letter-writing campaign by the organization Moms Across America, based on laboratory test findings of glyphosate contamination in some vaccines.  
+#' 
+#' To proceed, we select approximately 200 focal terms with the highest information gain. 
 
 terms = info_df %>%
-	filter(delta_H > .2) %>%
+	filter(delta_H > 10^-4) %>%
 	.$token
 
 terms
 
+## ------------------
+#' Cluster construction
 ## Load the fitted word2vec model
 model = read.binary.vectors(w2v_model_file)
 ## Submodel of focal terms
@@ -76,23 +137,24 @@ model_trimmed = focal_sim[rank(-apply(focal_sim,1,max)) < 1000,]
 cos_sim = cosineSimilarity(model_trimmed, model_trimmed)
 
 ## Cluster the terms
+## TODO: use plot largest cluster size to set cutoff
 clusters = aggExCluster(cos_sim, includeSim = TRUE)
 plot(clusters)
-cluster_terms = cutree(clusters, h = .98) %>% 
+cluster_terms = cutree(clusters, h = .99) %>% 
 	sort(decreasing = TRUE, sortBy = 'size') %>%
 	.@clusters %>% 
 	map(names)
 nontrivial_clusters = cluster_terms %>% 
 	map(length) %>% 
 	unlist %>% 
-	{. > 5} %>% 
+	{. > 10} %>% 
 	which()
 cluster_terms[nontrivial_clusters] -> cluster_terms
 
-TODO: need to standardize individual comments, get multigrams
-
 ## --------------------
-## Cluster mapping:  Vector projection approach
+#' ## Cluster mapping:  Vector projection approach ##
+#' TODO: pick up documentation from here
+#' looks like counts are much more informative than projections 
 
 ## Build cluster vectors
 cluster_vectors = cluster_terms %>%
@@ -135,24 +197,34 @@ comment_z %>%
 	
 
 ## --------------------
-## Cluster mapping:  Count approach
+#' ## Cluster mapping:  Count approach ##
 ## Count cluster occurrences in comments
-cluster_terms %>%
-	map(~ str_count(comments$comment_text, 
-					regex(.x, ignore.case = TRUE))) %>%
-	as.data.frame(col.names = str_c('cluster_', 1:length(.))) %>%
-	bind_cols(comments) ->
-	comment_counts
- 
+comment_counts = cluster_terms %>%
+	# map(~ str_count(comments$comment_text, 
+	# 				regex(.x, ignore.case = TRUE))) %>%
+	map(~ {tokens_df %>%
+			filter(token %in% .x) %>%
+			group_by(comment_id) %>%
+			summarize(n = n())}) %>%
+	bind_rows(.id = 'cluster') %>% 
+	filter(!duplicated(.)) %>% 
+	mutate(cluster = {str_c('cluster_', cluster) %>%
+						forcats::as_factor()}) %>% 
+	right_join(comments)
+	
 comment_counts %>%
-	filter(commenter_type %in% c('advocacy', 'industry')) %>%
+	filter(commenter_type %in% c('advocacy', 'industry'), 
+		   !is.na(cluster)) %>%
 	select(-comment_text) %>%
-	gather(cluster, count, starts_with('cluster'),
-		   factor_key = TRUE) %>% 
-	## Trim out the zero-counts
-	filter(count > 0) %>%
-	ggplot(aes(commenter_type, count, 
+	# gather(cluster, count, starts_with('cluster'),
+	# 	   factor_key = TRUE) %>% 
+	# ## Trim out the zero-counts
+	# filter(count > 0) %>%
+	ggplot(aes(commenter_type, n, 
 			   fill = commenter_type)) +
 	geom_dotplot(binaxis = 'y', stackdir = 'center', 
 				 color = NA, dotsize = 1.2) +
 	facet_wrap(~ cluster, scales = 'free_y')
+
+cluster_terms[[3]]
+cluster_terms[[8]]
