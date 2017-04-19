@@ -48,11 +48,13 @@ ggplot(token_counts_df, aes(tf_idf)) +
 token_counts_df %>%
 	# filter(tf_idf >= quantile(tf_idf, probs = (.995))) %>%
 	arrange(desc(tf_idf)) %>%
-	head(100) %>%
+	head(60) %>%
 	.$token %>% 
-	unique()
+	unique() %>%
+	sort() %>%
+	matrix(ncol = 3)
 
-#' However, note that the idf calculation, and so the tf-idf calculation, assigns a value of 0 to any term that occurs in both industry and advocacy documents, even if it is much more common in one of the two commenter types.  
+#' However, note that the idf calculation, and so the tf-idf calculation, assigns a value of 0 to any term that occurs in both industry and advocacy documents, even if it is much more common in one of the two commenter types.  So the tf-idf approach discards too much data.  
 
 token_counts_df %>%
 	filter(token == 'children')
@@ -98,12 +100,14 @@ info_df = token_counts_df %>%
 	mutate(H = h_at + h_an + h_it + h_in,
 		   delta_H = base_H - H)
 
-#' The next plot shows information gain against the conditional probability $p(industry | token)$.  Generally, information gain increases as this conditional probably becomes more extreme; the variation at the extremes is due to points that only occur in one commenter type.   
+#' The funnel plot below shows information gain against the conditional probability $p(industry | token)$.  Generally, information gain increases as this conditional probably becomes more extreme; the variation at the extremes is due to points that only occur in one commenter type.   
 ggplot(info_df, aes(p_industry_token / p_token, delta_H)) + 
-	geom_point() + 
+	geom_point() +
+	# geom_hex(bins = 30) +
 	geom_rug() + 
-	geom_smooth() + 
-	scale_y_log10()
+	geom_smooth() +
+	xlab('p(industry | token)') +
+	scale_y_log10(name = 'information gain')
 
 #' On this approach, relatively high-scoring terms are relatively frequent in one commenter type and much less frequent in the other.  
 
@@ -116,40 +120,79 @@ info_df %>%
 #' 
 #' To proceed, we select approximately 200 focal terms with the highest information gain. 
 
+ggplot(info_df, aes(delta_H)) + 
+	stat_ecdf() + 
+	scale_x_log10()
+
 terms = info_df %>%
 	filter(delta_H > 10^-4) %>%
 	.$token
 
-terms
+matrix(terms, ncol = 3)
 
 ## ------------------
-#' Cluster construction
+#' ## Cluster construction ##
+#' To cluster these terms, we first expand the termlist, identifying the 500 terms closest to the focal terms.  
+
 ## Load the fitted word2vec model
 model = read.binary.vectors(w2v_model_file)
 ## Submodel of focal terms
 focal_model = model[[terms, average = FALSE]]
 ## Cosine similarity to the focal terms
 focal_sim = cosineSimilarity(model, focal_model)
-## Select the 1000 terms closest to any of the focal terms
-model_trimmed = focal_sim[rank(-apply(focal_sim,1,max)) < 1000,]
+## Select the 500 terms closest to any of the focal terms
+model_trimmed = focal_sim[rank(-apply(focal_sim,1,max)) < 500,]
+
+#' We cluster these 500 terms using cosine similarity and affinity propagation.  
 
 ## Cosine similarity on the submodel
 cos_sim = cosineSimilarity(model_trimmed, model_trimmed)
-
-## Cluster the terms
-## TODO: use plot largest cluster size to set cutoff
+## Affinity propagation
 clusters = aggExCluster(cos_sim, includeSim = TRUE)
-plot(clusters)
-cluster_terms = cutree(clusters, h = .99) %>% 
+
+#' The dendrogram below shows that the tokens can be arranged into a cluster hierarchy with clear and distinct clusters.  
+#+ fig.height = 7, fig.width = 7
+library(ggraph)
+clusters %>%
+	as.dendrogram() %>% 
+	ggraph(layout = 'dendrogram', circular = FALSE) +
+	geom_edge_elbow() +
+	theme_graph() + 
+	coord_flip()
+
+#' Extracting clusters requires choosing a level at which to cut the dendrogram.  Below, we plot the size of the largest cluster against the cut level $h$.  
+
+largest_cluster = function (ap_tree, h) {
+	clusters %>%
+		cutree(h = h) %>%
+		sort(decreasing = TRUE, sortBy = 'size') %>%
+		.@clusters %>%
+		.[[1]] %>%
+		length
+}
+largest_cluster = Vectorize(largest_cluster, 
+							vectorize.args = 'h')
+tibble(h = seq(min(clusters@height), max(clusters@height), 
+			   length.out = 50), 
+	   largest_cluster = largest_cluster(clusters, h)) %>%
+	ggplot(aes(h, largest_cluster)) + 
+	geom_point() + 
+	geom_line() +
+	scale_y_log10()
+
+#' The plot suggests that we can obtain a largest mid-size cluster around $h = .97$.  We then filter 'non-trivial clusters' that contain more than 5 terms.  
+cluster_terms = cutree(clusters, h = .98) %>% 
 	sort(decreasing = TRUE, sortBy = 'size') %>%
 	.@clusters %>% 
 	map(names)
 nontrivial_clusters = cluster_terms %>% 
 	map(length) %>% 
 	unlist %>% 
-	{. > 10} %>% 
+	{. > 5} %>% 
 	which()
 cluster_terms[nontrivial_clusters] -> cluster_terms
+
+cluster_terms
 
 ## --------------------
 #' ## Cluster mapping:  Vector projection approach ##
@@ -226,5 +269,5 @@ comment_counts %>%
 				 color = NA, dotsize = 1.2) +
 	facet_wrap(~ cluster, scales = 'free_y')
 
-cluster_terms[[3]]
-cluster_terms[[8]]
+cluster_terms[[5]]
+cluster_terms[[6]]
