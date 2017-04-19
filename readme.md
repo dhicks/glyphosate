@@ -22,6 +22,7 @@ The analysis is broken into a series of steps.  Most of these steps are complete
 
 5. The script `4_clustering.R` uses affinity propagation to construct clusters of terms.  "Focal terms" are identified as the terms with the highest information gain for distinguishing industry and advocacy comments.  This initial termlist is expanded by taking the 1,000 most similar terms from the fitted word embedding model.  These 1,000 terms are then clustered using affinity propagation.  After clusters are developed, they are "mapped" to individual comments, and violin plots are used to identify clusters that are more strongly associated with industry or advocacy comments.  
 
-6. The script `5_ml.R` applies several different machine learning models to the same word embedding model.  As in the previous step, the aim is to identify word usage patterns that distinguish industry and advocacy comments.  
+6. The script `5_ml.R` constructs a machine learning classifier to distinguish industry and advocacy comments.  As in the previous step, the aim is to identify word usage patterns that distinguish industry and advocacy comments. 
 
+TODO: separate term selection and clustering; use same terms in ML step
 
