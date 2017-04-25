@@ -14,8 +14,8 @@ The analysis is broken into a series of steps.  Most of these steps are complete
     a. The downloaded attachments are manually reviewed for completeness (that is, to confirm that all files were downloaded correctly), accuracy of plaintext conversation, and relevance. In this particular docket, many of the attachments were petition signature pages, submissions from letter-writing campaigns (where individuals merely signed their name to prepared letters), previous publications (such as EPA documents or peer-reviewed journal articles), bibliographies, or commentators' CVs, resumes, or biographies.  All of these attachment types were excluded from the rest of the analysis.  
     b. All comments are manually classified under two variables:  
     
-        - *commenter type*:  one of academic, advocacy (consumer or environmental), government, industry (including organic farmers), or individual (anonymous or lacking a determinable affiliation)
-        - *valence*: either `neg` (arguing against glyphosate, its registration, use, or that it posed health risks) or `pro` (arguing for glyphosate)
+    - *commenter type*:  one of academic, advocacy (consumer or environmental), government, industry (including organic farmers), or individual (anonymous or lacking a determinable affiliation)
+    - *valence*: either `neg` (arguing against glyphosate, its registration, use, or that it poses health risks) or `pro` (arguing for glyphosate)
 
 3. Comments and attachments are combined into a single dataframe by the script `2_combine_comments_attachments.R`.  
 
