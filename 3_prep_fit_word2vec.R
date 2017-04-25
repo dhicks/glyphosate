@@ -1,4 +1,4 @@
-#' This script prepares the comments and attachments for processing by word2vec, then trains the word2vec model.  
+#' This script prepares the comments and attachments for processing by word2vec, which creates the word embeddings model, and fits the model.  
 
 library(tidyverse)
 library(stringr)

@@ -23,10 +23,10 @@ The analysis is broken into a series of steps.  Most of these steps are complete
 
 5. The script `4_clustering.R` uses affinity propagation to construct clusters of terms.  "Focal terms" are identified as the terms with the highest information gain for distinguishing industry and advocacy comments.  This initial termlist is expanded by taking the 500 most similar terms from the fitted word embedding model.  These 500 terms are then clustered using affinity propagation and word embedding similarity.  After clusters are developed, they are "mapped" to individual comments, and [dot plots](https://en.wikipedia.org/wiki/Dot_plot_(statistics)) are used to identify clusters that are more strongly associated with industry or advocacy comments.  
 
-6. The script `5_ml.R` constructs a machine learning classifier to distinguish industry and advocacy comments.  As in the previous step, the aim is to identify word usage patterns that distinguish industry and advocacy comments. 
+6. The script `5_ml.R` constructs a machine learning classifier to distinguish pro- and anti-glyphosate comments, extracts the most important terms for this classifier, and constructs partial dependence plots. 
 
 
 ## TODO ##
 - separate term selection and clustering; compare information gain to ML importance
-- give fitted word2vec model numbered prefix
+- numbered prefixes on cleaned data files and fitted word2vec model
 - short writeup of findings

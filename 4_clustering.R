@@ -21,7 +21,7 @@ type_by_valence = with(comments,
 					   table(commenter_type, valence, useNA = 'ifany'))
 type_by_valence
 chisq.test(type_by_valence, simulate.p.value = TRUE)
-#' No surprise: strong correlation between advocacy/industry and neg/pos. So we can treat industry comments as "highly informed and positive" and advoacy comments as "highly informed and negative."  
+#' No surprise: strong correlation between advocacy/industry and neg/pos. 
 
 ## Load tokens
 load('tokens_df.Rdata')
@@ -61,9 +61,10 @@ token_counts_df %>%
 
 ## --------------------
 #' ## Term selection: Information gain ##
-#' An alternative approach considers the information gain (entropy difference) for each term, relative to industry and advocacy comments. 
+#' An alternative approach considers the information gain (entropy difference) for each term, relative to industry and advocacy comments.
 #' 
-
+#' TODO: try `infotheo` package <https://cran.r-project.org/web/packages/infotheo/infotheo.pdf>
+#' 
 #' *Information gain* is calculated as *reduction in entropy*, $H(X) - H(X|token)$, where for this project the random variable $X$ is the commenter type, either advocacy or industry.  In turn, *entropy* is the expected value of *information* (in bits):
 #' $$ H(X) = \sum_x p(x) I(x) = -\sum p(x) \log_2 p(x). $$ 
 #' $$ H(X|T) = \sum_t p(t) H(X|T = t) = \sum_{x,t} p(x,t) \log_2 \frac{p(x)}{p(x,t)}, $$
@@ -185,6 +186,12 @@ cluster_terms = cutree(clusters, h = .98) %>%
 	sort(decreasing = TRUE, sortBy = 'size') %>%
 	.@clusters %>% 
 	map(names)
+cluster_terms %>%
+	map(length) %>%
+	unlist %>%
+	tibble(cluster = 1:length(.), length = .) %>%
+	ggplot(aes(cluster, length)) + geom_point()
+	
 nontrivial_clusters = cluster_terms %>% 
 	map(length) %>% 
 	unlist %>% 
@@ -196,13 +203,26 @@ cluster_terms
 
 ## --------------------
 #' ## Cluster mapping:  Vector projection approach ##
-#' TODO: pick up documentation from here
-#' looks like counts are much more informative than projections 
+#' With the clusters defined, we next "map" the clusters on to the individual comments, allowing us to evaluate the presence or extent of each cluster across the comments.  This script explores two approaches to cluster mapping.  In this section, we construct vector representations of each cluster and comment — in the same vector space as the word embeddings for individual terms — by taking the average of the word vectors in each.  We then project the comment vectors into the cluster vectors.  The magnitude of the resulting vector gives us an abstract, quantitative representation of the extend to which the cluster is present in the given comment.  
 
 ## Build cluster vectors
 cluster_vectors = cluster_terms %>%
 	map(~ model[[.x]]) #%>%
-	# map(normalize_lengths)
+	# map(normalize_lengths)  # `project` already handles normalization
+
+## MDS projection of cluster vectors
+cluster_vectors %>% 
+	map(normalize_lengths) %>%
+	# map(as.matrix) %>% 
+	reduce(rbind) %>%
+	{.%*%t(.)} %>%
+	{1-.} %>%
+	cmdscale() %>%
+	as_tibble() %>%
+	mutate(cluster = 1:nrow(.)) %>%
+	ggplot() + 
+	geom_text(aes(V1, V2, label = cluster)) +
+	geom_segment(aes(0, 0, xend = V1, yend = V2), alpha = .2)
 
 ## Build comment vectors
 comment_vectors = tokens_df %>%
@@ -213,6 +233,8 @@ comment_vectors = tokens_df %>%
 	reduce(rbind) %>% 
 	as.VectorSpaceModel()
 
+#' The magnitudes of the projections are not intrinsically meaningful.  To interpret them, we convert them into z-scores across all comments.  Thus, if the projection of comment $i$ onto cluster $j$ has magnitude 1, $i$ has one standard deviation more association with $j$ than the mean comment.  
+
 ## Project comments vectors into clusters
 comment_z = map(cluster_vectors, 
 				~ project(comment_vectors, .x)) %>%
@@ -221,49 +243,56 @@ comment_z = map(cluster_vectors,
 	reduce(cbind) %>% 
 	as_data_frame() %>%
 	`colnames<-`(str_c('cluster_', 1:ncol(.))) %>%
-	## Convert to Z-score
+	## Convert to z-score
 	mutate_all(funs((. - mean(.))/sd(.))) %>%
 	mutate(comment_id = {tokens_df %>% 
 			split(.$comment_id) %>% 
-			names})
-	
-comment_z %>%
-	inner_join(comments) %>%
+			names}) %>%
+	## Place in long format and rejoin with comments
 	gather(cluster, magnitude, starts_with('cluster'), 
 		   factor_key = TRUE) %>%
-	ggplot(aes(commenter_type, magnitude, 
+	inner_join(comments)
+
+#' We then generate dotplots for each cluster.  
+ggplot(comment_z, aes(commenter_type, magnitude, 
 			   fill = commenter_type)) +
 	# geom_violin(scale = 'count') + 
 	geom_dotplot(binaxis = 'y', stackdir = 'center', 
 				 color = NA, dotsize = 1.2) +
-	facet_wrap(~ cluster)
+	facet_wrap(~ cluster, scales = 'free_y')
+
+cluster_terms[[14]]
 	
 
 ## --------------------
 #' ## Cluster mapping:  Count approach ##
+#' This section takes an alternative approach to cluster mapping.  Rather than constructing vector embeddings, we simply count occurrences of the terms in a given cluster.  
+
 ## Count cluster occurrences in comments
 comment_counts = cluster_terms %>%
-	# map(~ str_count(comments$comment_text, 
-	# 				regex(.x, ignore.case = TRUE))) %>%
-	map(~ {tokens_df %>%
-			filter(token %in% .x) %>%
-			group_by(comment_id) %>%
-			summarize(n = n())}) %>%
-	bind_rows(.id = 'cluster') %>% 
-	filter(!duplicated(.)) %>% 
-	mutate(cluster = {str_c('cluster_', cluster) %>%
-						forcats::as_factor()}) %>% 
-	right_join(comments)
+	## There are a few ways to do this. One is to filter down terms, 
+	## then count rows.  
+	# map(~ {tokens_df %>%
+	# 		filter(token %in% .x) %>%
+	# 		group_by(comment_id) %>%
+	# 		summarize(n = n())}) %>%
+	# bind_rows(.id = 'cluster') %>% 
+	# filter(!duplicated(.)) %>% 
+	# mutate(cluster = {str_c('cluster_', cluster) %>%
+	# 					forcats::as_factor()}) %>% 
+	## Here's an approach using an inner join
+	tibble(token = ., 
+		   cluster = {str_c('cluster_', 1:length(.)) %>%
+		   	forcats::as_factor()}) %>%
+	unnest(token) %>%
+	inner_join(tokens_df) %>%
+	group_by(comment_id, cluster) %>%
+	summarize(n = n()) %>%
+	ungroup() %>%
+	## Then join back to the comments
+	inner_join(comments)
 	
-comment_counts %>%
-	filter(commenter_type %in% c('advocacy', 'industry'), 
-		   !is.na(cluster)) %>%
-	select(-comment_text) %>%
-	# gather(cluster, count, starts_with('cluster'),
-	# 	   factor_key = TRUE) %>% 
-	# ## Trim out the zero-counts
-	# filter(count > 0) %>%
-	ggplot(aes(commenter_type, n, 
+ggplot(comment_counts, aes(commenter_type, n, 
 			   fill = commenter_type)) +
 	geom_dotplot(binaxis = 'y', stackdir = 'center', 
 				 color = NA, dotsize = 1.2) +
@@ -271,3 +300,26 @@ comment_counts %>%
 
 cluster_terms[[5]]
 cluster_terms[[6]]
+
+#' The vector projection method is more inclusive, in the sense that comments that are semantically "close to" the cluster but do not necessarily contain the cluster terms can still get a relatively high z-score.  However, this also makes the vector projection method susceptible to overestimation.  
+#' 
+#' We can also compare the estimates of the two methods.  Note that vector projections generate a score for every comment; whereas the count method does not include comments with zero-counts.  In the following, we do not include the comments with zero-counts for any given cluster.  
+
+scores_combined = inner_join(comment_z, comment_counts)
+
+ggplot(scores_combined, aes(magnitude, n)) + 
+	geom_point() + 
+	geom_smooth(method = 'lm') + 
+	facet_wrap(~ cluster, scales = 'free')
+
+#' Taking all clusters together, the correlation is moderate to low.
+with(scores_combined, cor(magnitude, n)**2)
+
+#' Taking clusters separately, correlation ranges from effectively 0 to very strong.  Note that correlation does not seem to correspond to cluster size (clusters are numbered in descending order by number of terms). However, several of the clusters with high correlations have large outliers in terms of both count and magnitude.  
+scores_combined %>%
+	split(.$cluster) %>%
+	map(~ cor(.x$magnitude, .x$n)**2) %>% 
+	unlist() %>% sort()
+
+
+sessionInfo()
