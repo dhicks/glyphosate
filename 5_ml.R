@@ -19,7 +19,8 @@ registerDoSNOW(cl)
 load('tokens_df.Rdata')
 table(tokens_df$valence, useNA = 'ifany')
 tokens_df %>%
-	filter(!is.na(valence), 
+	filter(commenter_type %in% c('advocacy', 'industry'),
+		   !is.na(valence), 
 		   str_detect(token, '[a-z]+')) -> tokens_df
 
 ## Construct token counts and calculate tf-idf across comments
@@ -148,7 +149,7 @@ ggplot(part_dep, aes(token_count, prob, group = token)) +
 	# scale_x_continuous(breaks = scales::pretty_breaks()) +
 	ylab('p(positive | token_count)')
 
-#' This is (probably) an elaborate and somewhat obscure way to tell us what information gain or relative counts already told us in script 4.  
+#' This is (probably) an elaborate and somewhat obscure way to get at the same thing as clustering.  
 
 
 ## --------------------
