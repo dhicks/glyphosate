@@ -1,4 +1,6 @@
 #' This script retrieves all comments and selected attachments for a given Regulations.gov docket.  Beyond the dependencies in the first code block, it also uses two external command-line tools, pdftotext <http://www.foolabs.com/xpdf/download.html> and pandoc <http://pandoc.org/>.  
+#' 
+#' Note that this script assumes that a Regulations.gov API key is declared in `api_key.R`, as `api_key = '123foo'`.
 
 library(tidyverse)
 library(lubridate)
@@ -109,7 +111,8 @@ attachments = comments %>%
 
 attachments = attachments %>%
 	mutate(type = str_match(url, 'contentType=([^&]*)')[,2], 
-		   attachment_num = str_match(url, 'attachmentNumber=([0-9]+)')[,2], 
+		   attachment_num = str_match(url, 
+		   						   'attachmentNumber=([0-9]+)')[,2], 
 		   filename = str_c(comment_id, '-', attachment_num))
 
 table(attachments$type)
@@ -118,23 +121,29 @@ table(attachments$type)
 attachments = attachments %>%
 	filter(type %in% c('pdf', 'msw12', 'msw8', 'crtext'))
 
-ext = function (type) switch(type, pdf = 'pdf', msw12 = 'docx', 
+ext = function (type) switch(type, 
+							 pdf = 'pdf', msw12 = 'docx', 
 							 msw8 = 'doc', crtext = 'txt')
 ext = Vectorize(ext)
-attachments = attachments %>% mutate(ext = ext(type))
+attachments = attachments %>% 
+	mutate(ext = ext(type))
 
 #' Download and convert to text
 # attachment = attachments[48,]
 
-pb <- txtProgressBar(max = nrow(attachments), style = 3)
-progress <- function(n) setTxtProgressBar(pb, n)
-opts <- list(progress = progress)
+pb = tcltk::tkProgressBar(max = nrow(attachments))
+progress = function(n) {
+	tcltk::setTkProgressBar(
+		title = 'Downloading comment attachments', 
+		pb, n)
+}
 foreach(attachment = iter(attachments, by = 'row'), .combine = c, 
 		.packages = c('stringr'), 
-		.options.snow = opts) %dopar% {
+		.options.snow = list(progress = progress)) %dopar% {
 			## Download
 			dl_version = str_c(files_folder, '/', 
-							   attachment$filename, '.', attachment$ext)
+							   attachment$filename, '.', 
+							   attachment$ext)
 			if (!file.exists(dl_version)) {
 				url = str_c(attachment$url, '&', 
 							'api_key=', api_key)
@@ -146,19 +155,28 @@ foreach(attachment = iter(attachments, by = 'row'), .combine = c,
 								attachment$filename, '.', 'txt')
 			if (!file.exists(txt_version)) {
 				if (attachment$ext == 'pdf') {
-					## pdftotext: <http://www.foolabs.com/xpdf/download.html>
+					## pdftotext: 
+					## <http://www.foolabs.com/xpdf/download.html>
 					system2('pdftotext', dl_version, txt_version)
 				} else if (attachment$ext == 'docx') {
 					## Pandoc
-					system2('pandoc', c(dl_version, '-o', txt_version))
+					system2('pandoc', c(dl_version, 
+										'-o', txt_version))
 				} else if (attachment$ext == 'doc') {
-					warning(str_c('Cannot convert ', attachment$filename,' from doc to txt automatically'))
+					warning(str_c('Cannot convert ', 
+								  attachment$filename,
+								  ' from doc to txt automatically'))
 				} else {
 					stop('Unknown file type')
 				}
 			}
 		}
 
-save(comments, file = 'comments.Rdata')
+
+save(comments, file = '1_comments.Rdata')
+comments %>%
+	select(-comment_text, -attachment_urls) %>%
+	write_excel_csv('1_comment_metadata.csv')
+
 sessionInfo()
 
