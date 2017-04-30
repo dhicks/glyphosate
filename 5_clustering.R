@@ -1,13 +1,21 @@
 #' This script applies affinity propagation clustering to the fitted word2vec model. 
 
+## ------------------
+#' ## Summary of Findings ##
+#' TODO
+
+
+## ------------------
+#' ## Script setup ##
+
 library(tidyverse)
 library(tidytext)
 library(stringr)
 library(apcluster)
 library(wordVectors)
 
-w2v_model_file = 'glyphosate_w2v.bin'
-load('comments_attachments.Rdata')
+w2v_model_file = '4_glyphosate_w2v.bin'
+load('3_comments_attachments.Rdata')
 
 #' First let's look at the distribution of negative/positive comments across commenter types
 comments %>%
@@ -24,7 +32,7 @@ chisq.test(type_by_valence, simulate.p.value = TRUE)
 #' No surprise: strong correlation between advocacy/industry and neg/pos. 
 
 ## Load tokens
-load('tokens_df.Rdata')
+load('4_tokens_df.Rdata')
 tokens_df %>%
 	filter(commenter_type %in% c('advocacy', 'industry'), 
 		   str_detect(token, '[a-z]+')) -> tokens_df
@@ -42,6 +50,7 @@ token_counts_df = tokens_df %>%
 	summarize(token_n = n()) %>%
 	bind_tf_idf(token, commenter_type, token_n) %>%
 	ungroup()
+token_counts_df
 ggplot(token_counts_df, aes(tf_idf)) + 
 	stat_ecdf() + 
 	scale_x_log10()
@@ -52,7 +61,7 @@ token_counts_df %>%
 	.$token %>% 
 	unique() %>%
 	sort() %>%
-	matrix(ncol = 3)
+	matrix(ncol = 2)
 
 #' However, note that the idf calculation, and so the tf-idf calculation, assigns a value of 0 to any term that occurs in both industry and advocacy documents, even if it is much more common in one of the two commenter types.  So the tf-idf approach discards too much data.  
 
@@ -62,8 +71,6 @@ token_counts_df %>%
 ## --------------------
 #' ## Term selection: Information gain ##
 #' An alternative approach considers the information gain (entropy difference) for each term, relative to industry and advocacy comments.
-#' 
-#' TODO: try `infotheo` package <https://cran.r-project.org/web/packages/infotheo/infotheo.pdf>
 #' 
 #' *Information gain* is calculated as *reduction in entropy*, $H(X) - H(X|token)$, where for this project the random variable $X$ is the commenter type, either advocacy or industry.  In turn, *entropy* is the expected value of *information* (in bits):
 #' $$ H(X) = \sum_x p(x) I(x) = -\sum p(x) \log_2 p(x). $$ 
@@ -129,14 +136,14 @@ terms = info_df %>%
 	filter(delta_H > 10^-4) %>%
 	.$token
 
-matrix(terms, ncol = 3)
+matrix(terms, ncol = 2)
 
 ## ------------------
 #' ## Cluster construction ##
 #' To cluster these terms, we first expand the termlist, identifying the 500 terms closest to the focal terms.  
 
 ## Load the fitted word2vec model
-model = read.binary.vectors(w2v_model_file)
+model = quietly(read.binary.vectors)(w2v_model_file)$result
 ## Submodel of focal terms
 focal_model = model[[terms, average = FALSE]]
 ## Cosine similarity to the focal terms
@@ -254,6 +261,7 @@ comment_z = map(cluster_vectors,
 	inner_join(comments)
 
 #' We then generate dotplots for each cluster.  
+#+ fig.height = 7, fig.width = 10, fig.align = 'center'
 ggplot(comment_z, aes(commenter_type, magnitude, 
 			   fill = commenter_type)) +
 	# geom_violin(scale = 'count') + 
@@ -291,7 +299,8 @@ comment_counts = cluster_terms %>%
 	ungroup() %>%
 	## Then join back to the comments
 	inner_join(comments)
-	
+
+#+ fig.height = 7, fig.width = 10, fig.align = 'center'
 ggplot(comment_counts, aes(commenter_type, n, 
 			   fill = commenter_type)) +
 	geom_dotplot(binaxis = 'y', stackdir = 'center', 
@@ -301,12 +310,15 @@ ggplot(comment_counts, aes(commenter_type, n,
 cluster_terms[[5]]
 cluster_terms[[6]]
 
+## ------------------
+#' ## Cluster mapping analysis ##
 #' The vector projection method is more inclusive, in the sense that comments that are semantically "close to" the cluster but do not necessarily contain the cluster terms can still get a relatively high z-score.  However, this also makes the vector projection method susceptible to overestimation.  
 #' 
 #' We can also compare the estimates of the two methods.  Note that vector projections generate a score for every comment; whereas the count method does not include comments with zero-counts.  In the following, we do not include the comments with zero-counts for any given cluster.  
 
 scores_combined = inner_join(comment_z, comment_counts)
 
+#+ fig.height = 7, fig.width = 10, fig.align = 'center'
 ggplot(scores_combined, aes(magnitude, n)) + 
 	geom_point() + 
 	geom_smooth(method = 'lm') + 
@@ -319,7 +331,8 @@ with(scores_combined, cor(magnitude, n)**2)
 scores_combined %>%
 	split(.$cluster) %>%
 	map(~ cor(.x$magnitude, .x$n)**2) %>% 
-	unlist() %>% sort()
+	unlist() %>% 
+	sort(decreasing = TRUE)
 
 
 sessionInfo()

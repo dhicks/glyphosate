@@ -13,10 +13,10 @@ library(doSNOW)
 cl = parallel::makeCluster(parallel::detectCores())
 registerDoSNOW(cl)
 
-#' First we load the data and construct a vocabulary.  In this version of the script we use tf-idf.  Future versions might use information gain.  
+#' First we load the data and construct a vocabulary.  In this version of the script we use tf-idf.  Future versions might use information gain or likelihood ratios.  
 
 ## Load tokens
-load('tokens_df.Rdata')
+load('4_tokens_df.Rdata')
 table(tokens_df$valence, useNA = 'ifany')
 tokens_df %>%
 	filter(commenter_type %in% c('advocacy', 'industry'),
@@ -48,6 +48,8 @@ token_n_df %>%
 	filter(token %in% terms) %>%
 	select(comment_id, valence, token, token_n) %>%
 	spread(token, token_n, fill = 0) -> token_n_df
+token_n_df
+
 
 #' Next we fit the machine learning model.  To estimate out-of-model error, we first partition the data into training and testing sets.  
 
@@ -59,14 +61,12 @@ token_n_df %>%
 	mutate(training = row_number() %in% in_train) %>%
 	select(comment_id, training, valence, everything()) -> 
 	token_n_df
-token_n_df %>%
+training = token_n_df %>%
 	filter(training) %>%
-	select(-comment_id, -training) -> 
-	training
-token_n_df %>%
+	select(-comment_id, -training)
+testing = token_n_df %>%
 	filter(!training) %>%
-	select(-comment_id, -training) ->
-	testing
+	select(-comment_id, -training)
 
 ## Fit the model
 set.seed(113355)
@@ -129,11 +129,11 @@ part_dep = importance %>%
 	map2(names(.), ~ `names<-`(.x, .y)) %>%
 	## Calculate partial dependencies, using list item name
 	## to get the token
-	map2(names(.), ~ pdp::partial(rf_fit, 
+	map2(names(.), ~ quietly(pdp::partial)(rf_fit, 
 							 pred.var = .y, 
 							 pred.grid = .x, 
 							 prob = TRUE, 
-							 parallel = TRUE)) %>%
+							 parallel = TRUE)$result) %>%
 	## Then replace the column names with generic names
 	map(~ `names<-`(.x, c('token_count', 'prob'))) %>%
 	bind_rows(.id = 'token') %>%

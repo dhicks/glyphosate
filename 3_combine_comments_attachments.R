@@ -8,7 +8,7 @@ library(stringr)
 files_folder = 'files'
 
 ## Load attachments df
-attachments = readxl::read_excel('attachments.xlsx')
+attachments = readxl::read_excel('2_attachments.xlsx')
 ## Parse comment ID
 attachments = attachments %>%
 	filter(is.na(exclude)) %>%
@@ -61,8 +61,8 @@ attachments = attachments %>%
 	filter(!(comment_id %in% problem_attachments))
 
 ## Join w/ comments
-load('comments.Rdata')
-comments_meta = readxl::read_excel('comment metadata.xlsx')
+load('1_comments.Rdata')
+comments_meta = readxl::read_excel('2_comment_metadata.xlsx')
 
 comments = comments_meta %>% 
 	select(comment_id, commenter_type = `commenter type`, 
@@ -81,5 +81,5 @@ comments = full_join(comments, attachments) %>%
 
 str(comments, max.level = 1)
 
-save(comments, file = 'comments_attachments.Rdata')
+save(comments, file = '3_comments_attachments.Rdata')
 sessionInfo()

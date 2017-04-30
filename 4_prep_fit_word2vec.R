@@ -9,13 +9,13 @@ if (!require(wordVectors)) {
 	devtools::install_github("bmschmidt/wordVectors")
 }
 
-load('comments_attachments.Rdata')
+load('3_comments_attachments.Rdata')
 
 ## Output files
 ## The success ngram tokenings, and the word2vec model
-outfiles = c(str_c('3_', c('unigrams', 'bigrams', 'trigrams'), 
+outfiles = c(str_c('4_', c('unigrams', 'bigrams', 'trigrams'), 
 				   '.txt'), 
-				 'glyphosate_w2v.bin')
+				 '4_glyphosate_w2v.bin')
 
 #' The wordVectors vignette (<https://github.com/bmschmidt/wordVectors/blob/master/vignettes/introduction.Rmd>) uses `prep_word2vec` to combine the texts into a single text file for training.  However, that function assumes we have a single text file or directory of text files that need to be lowercased, tokenized, etc.  Since we don't want to use all of the attachments, and need to handle comments (which aren't in files at this point), we'll use tidytext instead.  
 #' In particular, according to the vignette, prep does three things: 
@@ -49,6 +49,7 @@ vocabulary = ngramed %>%
 	unique() %>% 
 	sort()
 #' Next we construct all of the bigrams, trigrams, and quadgrams in tokens_df. We then filter these based on which tokens appear in the vocabulary.  
+#' 
 #' NB A limitation of the particular approach below is that we don't remove overlapping ngrams.  For example, the first comment contains 'our,' 'our_food,' 'our_food_supply,' 'food,' 'food_supply,' and 'supply,' rather than just 'our_food_supply.'  
 tokens_df %>%
 	group_by(comment_id) %>%
@@ -71,7 +72,7 @@ tokens_df %>%
 	select(comment_id, valence, token) %>%
 	head(20)
 ## Save this for use in later scripts
-save(tokens_df, file = 'tokens_df.Rdata')
+save(tokens_df, file = '4_tokens_df.Rdata')
 
 #' Now we train the word2vec model. (Or, since training can take several minutes, we detect that the file already exists and skip training.)
 if (!file.exists(outfiles[4])) {
@@ -86,7 +87,7 @@ if (!file.exists(outfiles[4])) {
 								force = TRUE)
 	)
 } else {
-	print('Model file found; skipping training')
+	message('Model file found; skipping training')
 }
 
 sessionInfo()
