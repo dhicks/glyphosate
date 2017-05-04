@@ -35,7 +35,8 @@ chisq.test(type_by_valence, simulate.p.value = TRUE)
 load('4_tokens_df.Rdata')
 tokens_df %>%
 	filter(commenter_type %in% c('advocacy', 'industry'), 
-		   str_detect(token, '[a-z]+')) -> tokens_df
+		   str_detect(token, '[a-z]+'), 
+		   !str_detect(token, '[0-9]+')) -> tokens_df
 
 tokens_df %>% 
 	.$token %>%
