@@ -6,6 +6,8 @@ This project demonstrates the use of text mining methods to analyze public comme
 
 The analysis is broken into a series of steps.  Most of these steps are completely automated, using the scripts found in this repository.  Each script has a corresponding literate HTML version.  Running these scripts (or processing them with `rmarkdown::render`), in numerical order, will completely reproduce the analysis.  
 
+Some brief findings are presented in the final script file, `7_findings.R`.  However, the focus of this demonstration project is on data-gathering and -analysis methods, rather than the development of communicable findings.  
+
 1. The script `1_scrape.R` retrieves all public comments and selected attachments (PDF, Microsoft Word, and plaintext files) found in the docket.  Attachments are converted to plaintext files using two command-line tools, `pdftotext` and `pandoc`. 
 
 2. 
