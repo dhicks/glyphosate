@@ -29,3 +29,6 @@ Some brief findings are presented in the final script file, `7_findings.R`.  How
 6. The script `6_ml.R` constructs a machine learning classifier to distinguish pro- and anti-glyphosate comments, extracts the most important terms for this classifier, and constructs partial dependence plots. 
 
 7. The file `7_findings.R` draws some implications from the cluster analysis in step 5.  It discusses linguistic differences between advocacy and industry comments; suggests how these differences might have influenced EPA's decisionmaking; and examines the relative prominence of workers, consumers, children, and farmers in the comments.  
+
+
+NB To view HTML views, prepend `https://htmlpreview.github.io/?` to the entire URL, including the `https`.  For example, <https://htmlpreview.github.io/?https://github.com/dhicks/glyphosate/blob/master/7_findings.html>.  
