@@ -16,10 +16,12 @@ library(wordVectors)
 load('5_clustering.Rdata')
 names(cluster_terms) = str_c('cluster_', 1:length(cluster_terms))
 
-#' First we re-plot the dotplots of vector projections. Note the use of a log scale.  
-#+ fig.height = 7, fig.width = 7, fig.align = 'center'
-ggplot(comment_counts, aes(commenter_type, n, 
-					  fill = commenter_type)) +
+#' First we re-plot the dotplots of vector projections (excluding cluster 16, which contains only a single comment). Note the use of a log scale.  
+#+ fig.height = 5, fig.width = 8, fig.align = 'center'
+comment_counts %>%
+	filter(cluster != 'cluster_16') %>%
+	ggplot(aes(commenter_type, n, 
+			   fill = commenter_type)) +
 	geom_dotplot(binaxis = 'y', stackdir = 'center', 
 				 color = NA, dotsize = 1.2) +
 	facet_wrap(~ cluster, scales = 'free_y') + 
@@ -29,6 +31,26 @@ ggplot(comment_counts, aes(commenter_type, n,
 advocacy_clusters = c(6, 11, 13, 14, 17, 19, 21, 22)
 
 industry_clusters = c(1:5, 7:10, 12, 15, 18, 20)
+
+#' Given these cluster associations, we next re-plot the MDS projection. This plot projects the full 100-dimensional vectors down into 2-dimensional space.  The plot indicates shows that advocacy and industry clusters are generally not close to each other, meaning that (with respect to the terms used in this clustering exercise), industry and advocacy generally use different language and talk about different concepts.  Recall that the terms were selected using information gain to distinguish the two types of comments.  There are two pairs of clusters that are the exceptions to this trend — industry and advocacy clusters that are close to each other: 12 and 22, and 7 and 19.  
+
+## MDS projection of cluster vectors
+cluster_vectors %>% 
+	map(normalize_lengths) %>%
+	# map(as.matrix) %>% 
+	reduce(rbind) %>%
+	{.%*%t(.)} %>%
+	{1-.} %>%
+	cmdscale() %>%
+	as_tibble() %>%
+	mutate(cluster = 1:nrow(.), 
+		   cluster_type = ifelse(cluster %in% industry_clusters, 'industry', 
+		   					  ifelse(cluster %in% advocacy_clusters, 'advocacy', 
+		   					  	   NA))) %>%
+	ggplot() + 
+	geom_text(aes(V1, V2, label = cluster, color = cluster_type)) +
+	geom_segment(aes(0, 0, xend = V1, yend = V2), alpha = .2) + 
+	theme_classic()
 
 #' ## Advocacy clusters ##
 #' ### 6 ###
@@ -64,7 +86,7 @@ comment_counts %>%
 	filter(cluster == 'cluster_19', 
 		   n > 15) %>%
 	arrange(desc(n))
-#' This cluster appears to refer to the use of glyphosate on genetically modified corn, soy, and (on the industry side) sugarbeet.  
+#' This cluster appears to refer to the use of glyphosate on genetically modified corn, soy, and (on the industry side) sugarbeet.  On the MDS plot, this cluster is close to cluster 7, which is an industry cluster discussing the use of glyphosate in the sugarbeet industry.  It is also close to cluster 18, which is another industry cluster discussing sugarbeets.  
 #' 
 #' ### 21 ###
 cluster_terms[[21]]
@@ -75,6 +97,8 @@ cluster_terms[[22]]
 comment_counts %>%
 	filter(cluster == 'cluster_22')
 #' Comments 0046 and 0501 come from Jennifer Sass of the Natural Resources Defense Council. Comment 0507 comes from the Center for Food Safety.  All three comments refer to a legal exchange involving Enlist Duo, an herbicide cocktail that combines glyphosate and dicamba. In particular, they each include the legal citation "Resp’ts’ Mot. for Voluntary Vacatur and Remand, NRDC v. EPA, Case Nos. 14-73353." 
+#' 
+#' On the MDS plot, this cluster is close to cluster 12.  That cluster is difficult to interpret; it appears to refer to members of an industry-sponsored expert panel, and perhaps members of the FIFRA SAP as well.  It may be that those names occurred somewhat near substantive discussions of the legal exchange over Enlist Duo.  However, this would require manual inspection of these comments.  
 #' 
 
 #' ## Industry Clusters ##
@@ -125,7 +149,7 @@ cluster_terms[[10]]
 #' 
 #' ### 12 ###
 cluster_terms[[12]]
-#' *[]
+#' This cluster is difficult to interpret; it appears to refer to a few members of the industry-sponsored expert panel, as well as the FIFRA SAP itself.  
 #' 
 #' ### 15 ###
 cluster_terms[[15]]
@@ -133,11 +157,11 @@ cluster_terms[[15]]
 #' 
 #' ### 18 ###
 cluster_terms[[18]]
-#' *[]
+#' This is another sugarbeet cluster.  
 #' 
 #' ### 20 ###
 cluster_terms[[20]]
-#' *[]
+#' This cluster is difficult to interpret.  Several of its terms appear to be abbreviations, and perhaps were extracted from citations.  
 #' 
 
 
@@ -178,7 +202,8 @@ term_magnitudes = c('workers', 'consumers', 'children', 'farmers') %>%
 
 ggplot(term_magnitudes, 
 	   aes(base_term, -magnitude, alpha = similarity)) + 
-	geom_point(position = position_jitter(width = .15))
+	geom_point(position = position_jitter(width = .15)) + 
+	theme_classic()
 	
 #' The plot suggests that "workers" and its related terms are generally more common than "consumers" and its related terms.  The next chunk calculates the mean magnitude, and its standard error, weighting each term by its similarity to the base term.  "Consumers" has the largest weighted magnitude (i.e., the lowest prevalence in the dataset), due to a few terms with especially high magnitude; "workers" has the smallest (i.e., the highest prevalence in the dataset), both on its own and due to relatively low similarity and its high-magnitude terms.  
 
@@ -191,4 +216,30 @@ term_magnitudes %>%
 			  						 weights = similarity, 
 			  						 normwt = TRUE) / n()))
 
+#' Further, we can use a t-test against the null hypothesis of no difference for each pair of terms. In the table below, the p value has been corrected for multiple comparisons using a version of the Bonferonni correction.  
+
+term_magnitudes %>%
+	group_by(base_term) %>%
+	summarize(mean_mag = Hmisc::wtd.mean(magnitude, 
+										 weights = similarity, 
+										 normwt = TRUE), 
+			  mean_se = sqrt(Hmisc::wtd.var(magnitude, 
+			  							  weights = similarity, 
+			  							  normwt = TRUE) / n()), 
+			  n = n()) %>%
+	merge(., ., by = NULL) %>%
+	filter(base_term.x < base_term.y) %>%
+	arrange(base_term.x) %>%
+	mutate(abs_diff_mean = abs(mean_mag.x - mean_mag.y), 
+		   diff_se = sqrt(mean_se.x^2/n.x + mean_se.y^2/n.y), 
+		   t = abs_diff_mean / (diff_se), 
+		   df = (n.x-1) * (mean_se.x^2 + mean_se.y^2)^2 / (mean_se.x^4 + mean_se.y^4),
+		   p_uncorr = pt(t, df, lower.tail = FALSE), 
+		   ## Correct for multiple comparisons by multiplying by the 
+		   ## number of comparisons made
+		   p = p_uncorr * n()) %>%
+	select(base_term.x, base_term.y, abs_diff_mean, diff_se, t, df, p)
+
+#' Using the conventional threshold of $p < .05 = 5 \times 10^{-2}$ for statistical significance, all of these differences are statistically significant except for children-workers. In particular, consumers-workers has the largest absolute difference in weighted means.  
+#' 
 #' These results do not indicate the same phenomenon identified by Guthman and Brown.  However, the text mining approach taken here is not sensitive to context; in particular, it cannot distinguish the way different groups of commenters (industry vs. advocacy organizations vs. individuals) talk about children, consumers, farmers, or workers.  A more thorough analysis would use the quantiative results here as the starting point for a focused qualitative analysis.  
